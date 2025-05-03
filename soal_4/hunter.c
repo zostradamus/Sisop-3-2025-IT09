@@ -240,72 +240,99 @@ int main() {
                 }
             }
         }
-        else if(opt == 2) {
-    // Conquer dungeon (by key)
-    printf("Masukkan Key dungeon yang ingin ditaklukkan: ");
-    int key;
-    scanf("%d", &key);
-    semop(semid, &sem_lock, 1);
-    int idxDungeon = -1;
-    for(int i = 0; i < globalMem->numDungeons; i++) {
-        if((int)globalMem->dungeonKeys[i] == key) {
-            idxDungeon = i;
-            break;
-        }
-    }
-    if(idxDungeon == -1) {
-        printf("Dungeon dengan key %d tidak ditemukan.\n", key);
-        semop(semid, &sem_unlock, 1);
-        continue;
-    }
-    // Hapus dungeon dari daftar global
-    for(int i = idxDungeon; i < globalMem->numDungeons - 1; i++) {
-        globalMem->dungeonKeys[i] = globalMem->dungeonKeys[i+1];
-    }
-    globalMem->numDungeons--;
-    semop(semid, &sem_unlock, 1);
-
-    // Baca exp dan stats dari dungeon tersebut, lalu hapus shared memory-nya
-    int shmid_d = shmget(key, sizeof(struct Dungeon), 0666);
-    int expGain = 0;
-    int atkGain = 0;
-    int hpGain = 0;
-    int defGain = 0;
-    if(shmid_d >= 0) {
-        struct Dungeon *d = (struct Dungeon*) shmat(shmid_d, NULL, 0);
-        if(d != (void*) -1) {
-            expGain = d->exp;
-            atkGain = d->atk;
-            hpGain = d->hp;
-            defGain = d->def;
-            shmdt(d);
-        }
-        shmctl(shmid_d, IPC_RMID, NULL);
-    }
-
-    // Tambahkan exp dan stats ke hunter
-    semop(semid, &sem_lock, 1);
-    for(int i = 0; i < MAX_HUNTERS; i++) {
-        if(globalMem->hunters[i].active && globalMem->hunters[i].id == userId) {
-            globalMem->hunters[i].exp += expGain;
-            globalMem->hunters[i].atk += atkGain;
-            globalMem->hunters[i].hp += hpGain;
-            globalMem->hunters[i].def += defGain;
-
-            // Cek apakah hunter naik level
-            if(globalMem->hunters[i].exp >= 500) {
-                globalMem->hunters[i].exp = 0;
-                levelUp(&globalMem->hunters[i]);
-                printf("Selamat! Anda naik level.\n");
+            else if(opt == 2) {
+                // Conquer dungeon (by key)
+                printf("Masukkan Key dungeon yang ingin ditaklukkan: ");
+                int key;
+                scanf("%d", &key);
+            
+                int shmid_d = shmget(key, sizeof(struct Dungeon), 0666);
+                if(shmid_d < 0) {
+                    printf("Dungeon dengan key %d tidak ditemukan.\n", key);
+                    continue;
+                }
+            
+                struct Dungeon *d = (struct Dungeon*) shmat(shmid_d, NULL, 0);
+                if(d == (void*) -1) {
+                    perror("Gagal attach dungeon");
+                    continue;
+                }
+            
+                // Ambil hunter
+                semop(semid, &sem_lock, 1);
+                struct Hunter *hunter = NULL;
+                for(int i = 0; i < MAX_HUNTERS; i++) {
+                    if(globalMem->hunters[i].active && globalMem->hunters[i].id == userId) {
+                        hunter = &globalMem->hunters[i];
+                        break;
+                    }
+                }
+                if(!hunter) {
+                    semop(semid, &sem_unlock, 1);
+                    printf("Hunter tidak ditemukan.\n");
+                    shmdt(d);
+                    continue;
+                }
+            
+                // Cek apakah level hunter cukup
+                if(hunter->level < d->level) {
+                    semop(semid, &sem_unlock, 1);
+                    printf("Level Anda terlalu rendah untuk dungeon ini!\n");
+                    shmdt(d);
+                    continue;
+                }
+            
+                // Simulasi pertarungan
+                int hunterHp = hunter->hp;
+                int dungeonHp = d->hp;
+            
+                while(hunterHp > 0 && dungeonHp > 0) {
+                    int damageToDungeon = hunter->atk - d->def;
+                    if(damageToDungeon < 0) damageToDungeon = 0;
+                    dungeonHp -= damageToDungeon;
+            
+                    if(dungeonHp <= 0) break;
+            
+                    int damageToHunter = d->atk - hunter->def;
+                    if(damageToHunter < 0) damageToHunter = 0;
+                    hunterHp -= damageToHunter;
+                }
+            
+                if(hunterHp <= 0) {
+                    printf("Anda kalah dalam pertarungan melawan dungeon level %d...\n", d->level);
+                    semop(semid, &sem_unlock, 1);
+                    shmdt(d);
+                    continue;
+                }
+            
+                // Menang: Dapat exp dan dungeon dihapus
+                printf("Anda berhasil menaklukkan dungeon level %d!\n", d->level);
+                hunter->exp += d->exp;
+            
+                // Cek level up: misalnya 100 exp per level
+                while(hunter->exp >= hunter->level * 100) {
+                    hunter->exp -= hunter->level * 100;
+                    levelUp(hunter);
+                }
+            
+                // Hapus dungeon dari global memory
+                for(int i = 0; i < globalMem->numDungeons; i++) {
+                    if((int)globalMem->dungeonKeys[i] == key) {
+                        for(int j = i; j < globalMem->numDungeons - 1; j++) {
+                            globalMem->dungeonKeys[j] = globalMem->dungeonKeys[j + 1];
+                        }
+                        globalMem->numDungeons--;
+                        break;
+                    }
+                }
+            
+                semop(semid, &sem_unlock, 1);
+            
+                // Hapus shared memory dungeon
+                shmdt(d);
+                shmctl(shmid_d, IPC_RMID, NULL);
             }
-
-            printf("Anda memperoleh %d exp, +%d ATK, +%d HP, +%d DEF dari dungeon.\n",
-                   expGain, atkGain, hpGain, defGain);
-            break;
-        }
-    }
-    semop(semid, &sem_unlock, 1);
-}
+            
 
         else if(opt == 3) {
             int myIdx = -1;
