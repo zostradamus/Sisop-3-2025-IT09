@@ -27,7 +27,7 @@ Game berbasis **shared memory** & **semaphore** di C, dengan dua komponen utama:
 
 ```
 
-.
+
 ├── system.c
 └── hunter.c
 
