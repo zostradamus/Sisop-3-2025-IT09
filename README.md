@@ -286,6 +286,7 @@ client/
 ###### connect_socket()
 1. Membuat socket AF_UNIX dan mencoba koneksi ke server.
 2. Jika gagal, kembalikan -1.
+3. Code:
 ```
 int connect_socket() {
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -305,6 +306,7 @@ int connect_socket() {
 ```
 ###### menu()
 Menampilkan menu utama yang dapat dipilih oleh user.
+Code:
 ```
 void menu() {
     printf("\n===== Image RPC Client =====\n");
@@ -312,6 +314,172 @@ void menu() {
     printf("2. Minta file JPEG dari server\n");
     printf("3. Keluar\n");
     printf("Pilih: ");
+}
+```
+###### send_decrypt()
+1. Meminta nama file teks terenkripsi dari user.
+2. File dibaca dari: client/secrets/<filename>.
+3. Isi file dibaca, lalu dikirim ke server dengan format:
+```
+DECRYPT|<isi_teks_terenkripsi>
+```
+4. Server akan mendekripsi dan mengembalikan nama file JPEG.
+5. Client kemudian mengambil file JPEG dari server/database/ dan menyimpannya ke folder client/.
+6. Code:
+```
+void send_decrypt() {
+    char filename[128];
+    printf("Masukkan nama file teks terenkripsi (misal: input_1.txt): ");
+    scanf("%s", filename);
+
+    int sock = connect_socket();
+    if (sock == -1) {
+        printf("[ERROR] Gagal connect ke server\n");
+        return;
+    }
+
+    char filepath[256];
+    snprintf(filepath, sizeof(filepath), "client/secrets/%s", filename);
+
+    FILE *f = fopen(filepath, "r");
+    if (!f) {
+    	printf("File not found");
+    	return;
+    }
+
+        char text[BUFFER_SIZE] = {0};
+        fread(text, 1, sizeof(text), f);
+        fclose(f);
+
+    char request[BUFFER_SIZE];
+    snprintf(request, sizeof(request), "DECRYPT|%s", text);
+    send(sock, request, strlen(request), 0);
+
+    char response[BUFFER_SIZE] = {0};
+    int r = recv(sock, response, sizeof(response), 0);
+    response[r] = '\0';
+
+    if (strncmp(response, "ERR", 3) == 0) {
+        printf("[Server Error] %s\n", response);
+    } else {
+        char path[256];
+        snprintf(path, sizeof(path), "client/%s", response);
+        char fullfile[BUFFER_SIZE];
+
+        snprintf(fullfile, sizeof(fullfile), "server/database/%s", response);
+        int fsrc = open(fullfile, O_RDONLY);
+        int fdest = open(path, O_CREAT | O_WRONLY, 0644);
+        char buffer[BUFFER_SIZE];
+        int bytes;
+        while ((bytes = read(fsrc, buffer, BUFFER_SIZE)) > 0) {
+            write(fdest, buffer, bytes);
+        }
+        close(fsrc);
+        close(fdest);
+
+        printf("[INFO] File JPEG diterima: %s\n", response);
+    }
+    close(sock);
+}
+```
+###### send_download()
+1. Meminta nama file JPEG dari user (misalnya 1744401282.jpeg).
+2. Mengirim permintaan ke server dalam format:
+```
+DOWNLOAD|<nama_file.jpeg>
+```
+3. Server merespons dengan string hex dari isi file JPEG.
+4. Fungsi save_hex_to_file() akan mengubah hex menjadi data biner dan menyimpannya sebagai file JPEG di client/.
+5. Code:
+```
+void send_download() {
+    char filename[128];
+    printf("Masukkan nama file JPEG (misal: 1744401282.jpeg): ");
+    scanf("%s", filename);
+
+    int sock = connect_socket();
+    if (sock == -1) {
+        printf("[ERROR] Gagal connect ke server\n");
+        return;
+    }
+
+    char request[256];
+    snprintf(request, sizeof(request), "DOWNLOAD|%s", filename);
+    send(sock, request, strlen(request), 0);
+
+    char response[BUFFER_SIZE] = {0};
+    int r = recv(sock, response, sizeof(response), 0);
+
+    if (strncmp(response, "ERR", 3) == 0) {
+        response[r] = '\0';
+        printf("[Server Error] %s\n", response);
+    } else {
+        char out_path[256];
+        snprintf(out_path, sizeof(out_path), "client/%s", filename);
+        save_hex_to_file(response, out_path);
+        printf("[INFO] File JPEG diterima dan disimpan: %s\n", out_path);
+    }
+    close(sock);
+}
+```
+###### save_hex_to_file()
+1. Menerima string heksadesimal dan menyimpannya sebagai file biner.
+2. Setiap dua karakter hex dikonversi menjadi satu byte menggunakan sscanf() dan fputc().
+3. Code:
+```
+int save_hex_to_file(const char* hex, const char* output_filename) {
+    FILE* out = fopen(output_filename, "wb");
+    if (!out) return -1;
+
+    for (size_t i = 0; hex[i] && hex[i+1]; i += 2) {
+        if (!isxdigit(hex[i]) || !isxdigit(hex[i+1])) continue;
+
+        unsigned int byte;
+        sscanf(hex + i, "%2x", &byte);
+        fputc(byte, out);
+    }
+
+    fclose(out);
+    return 0;
+}
+```
+###### send_exit()
+1. Mengirim pesan "EXIT" ke server untuk menandakan client ingin keluar.
+2. Server dapat mencatatnya dalam log.
+3. Code:
+```
+void send_exit() {
+    int sock = connect_socket();
+    if (sock == -1) return;
+    char *exit_msg = "EXIT";
+    send(sock, exit_msg, strlen(exit_msg), 0);
+    close(sock);
+}
+```
+###### Main Function
+```
+int main() {
+    while (1) {
+        menu();
+        int pilihan;
+        scanf("%d", &pilihan);
+        getchar();
+
+        switch (pilihan) {
+            case 1:
+                send_decrypt();
+                break;
+            case 2:
+                send_download();
+                break;
+            case 3:
+                send_exit();
+                printf("Keluar dari program.\n");
+                return 0;
+            default:
+                printf("Pilihan tidak valid.\n");
+        }
+    }
 }
 ```
 
