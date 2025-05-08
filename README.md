@@ -7,6 +7,33 @@
 | Prabaswara Febrian Winandika   | 5027241069 |
 | Muhammad Farrel Rafli Al Fasya | 5027241075 |
 
+### Soal 1
+## Deskripsi 
+Tugas ini meminta pembuatan dua program, yaitu image_server.c dan image_client.c, yang saling terhubung melalui komunikasi Remote Procedure Call (RPC) menggunakan socket. Tujuannya adalah untuk mengelola proses dekripsi file teks rahasia menjadi gambar JPEG serta memfasilitasi pengambilan (download) gambar tersebut oleh client tanpa menggunakan metode penyalinan atau pemindahan file secara langsung.
+```
+.
+├── client
+│   ├── 1744403652.jpeg
+│   ├── 1744403687.jpeg
+│   ├── image_client
+│   └── secrets
+│       ├── input_1.txt
+│       ├── input_2.txt
+│       ├── input_3.txt
+│       ├── input_4.txt
+│       └── input_5.txt
+├── image_client.c
+├── image_server.c
+└── server
+    ├── database
+    │   ├── 1744403652.jpeg
+    │   └── 1744403687.jpeg
+    ├── image_server
+    └── server.log
+
+```
+## Penjelasan Program
+
 ### SOAL 2
 ## Deskripsi 
 Delivery Management
