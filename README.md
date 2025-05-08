@@ -63,37 +63,19 @@ Tugas ini meminta pembuatan dua program, yaitu image_server.c dan image_client.c
   2. Nama file teks salah atau tidak ditemukan.
 ### Code
 #### image_server.c
+##### Struktur Direktori
 ```
-// image_server.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <signal.h>
-#include <errno.h>
-
-#define SOCKET_PATH "/tmp/image_rpc_socket"
-#define LOG_FILE "server/server.log"
-#define DATABASE_DIR "server/database/"
-#define BUFFER_SIZE 8192
-
-void write_log(const char *source, const char *action, const char *info) {
-    FILE *log = fopen(LOG_FILE, "a");
-    if (!log) return;
-
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    char timestamp[32];
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", t);
-    fprintf(log, "[%s][%s]: [%s] [%s]\n", source, timestamp, action, info);
-    fclose(log);
-}
-
+server/
+├── database/         # Folder hasil penyimpanan file jpeg hasil dekripsi
+├── server.log        # File log interaksi client-server
+└── image_server      # Binary hasil kompilasi image_server.c
+```
+##### Cara Kerja Program
+###### Encode File ke Hex (Untuk DOWNLOAD)
+1. Membaca file .jpeg biner.
+2. Mengonversi setiap byte ke string hexadecimal (%02x).
+3. Return: string hex.
+```
 char *encode_file_to_hex(const char *filepath) {
     FILE *file = fopen(filepath, "rb");
     if (!file) return NULL;
@@ -126,39 +108,29 @@ char *encode_file_to_hex(const char *filepath) {
     free(buffer);
     return hex_string;
 }
-
-unsigned char *reverse_and_decode_hex(const char *hex_data, size_t *out_size) {
-    int length = strlen(hex_data);
-    if (length % 2 != 0) return NULL;  // harus genap
-
-    // Balik string hex
-    char *reversedStr = malloc(length + 1);
-    if (!reversedStr) return NULL;
-
-    strcpy(reversedStr, hex_data);
-    for (int i = 0, j = length - 1; i < j; i++, j--) {
-        char temp = reversedStr[i];
-        reversedStr[i] = reversedStr[j];
-        reversedStr[j] = temp;
-    }
-
-    // Konversi ke byte array
-    size_t byteArraySize = length / 2;
-    unsigned char *byteArray = malloc(byteArraySize);
-    if (!byteArray) {
-        free(reversedStr);
-        return NULL;
-    }
-
-    for (size_t i = 0; i < byteArraySize; i++) {
-        sscanf(reversedStr + 2 * i, "%2hhx", &byteArray[i]);
-    }
-
-    free(reversedStr);
-    *out_size = byteArraySize;
-    return byteArray;  // jangan lupa free di pemanggil
-}
-
+```
+###### Handle Client
+Menangani permintaan client berdasarkan command awal:
+1. "DECRYPT|<hex_string>":
+   - Melakukan dekripsi reverse + hex decode.
+   - Menyimpan hasil sebagai file JPEG server/database/<timestamp>.jpeg.
+   - Mengirimkan kembali nama file ke client.
+   - Logging aksi.
+2. "DOWNLOAD|<filename>":
+   - Membaca file JPEG sesuai nama di database.
+   - Encode isi file ke hex.
+   - Kirim ke client.
+   - Logging aksi.
+3. "EXIT":
+   - Mencatat aksi keluar di log.
+4. Reverse + Decode Hex (Untuk DECRYPT) (di dalam handle client)
+   - Membalik string hex (karena enkripsi dilakukan dengan reverse).
+   - Mengubah setiap dua digit hex menjadi 1 byte.
+   - Return: pointer ke array biner JPEG dan ukuran array.
+```
+unsigned char *reverse_and_decode_hex(const char *hex_data, size_t *out_size)
+```
+```
 void handle_client(int client_sock) {
     char buffer[BUFFER_SIZE];
     memset(buffer, 0, sizeof(buffer));
@@ -176,23 +148,7 @@ void handle_client(int client_sock) {
             return;
         }
 
-        /*char filepath[256];
-        snprintf(filepath, sizeof(filepath), "client/secrets/%s", filename);
-
-        FILE *f = fopen(filepath, "r");
-        if (!f) {
-            send(client_sock, "ERR:File not found", 19, 0);
-            write_log("Client", "DECRYPT", "Text data (file not found)");
-            return;
-        }*/
-
-        //char text[BUFFER_SIZE] = {0};
-        //fread(text, 1, sizeof(text), data);
-
         write_log("Client", "DECRYPT", "Text data");
-
-        //send(client_sock, data, strlen(data), 0);
-        //return;
 
 	size_t size;
         unsigned char *jpeg_data = reverse_and_decode_hex(data, &size);
@@ -224,20 +180,13 @@ void handle_client(int client_sock) {
 
         char filepath[256];
         snprintf(filepath, sizeof(filepath), DATABASE_DIR "%s", filename);
-       /* FILE *f = fopen(filepath, "rb");
-        if (!f) {
-            send(client_sock, "ERR:File not found", 19, 0);
-            return;
-        }*/
 
         char *hex_data = encode_file_to_hex(filepath);
 	if (!hex_data) {
             send(client_sock, "ERR:File not found", 19, 0);
             return;
     	}
-        /*char filedata[BUFFER_SIZE] = {0};
-        size_t r = fread(filedata, 1, sizeof(filedata), f);
-        fclose(f);*/
+        
         send(client_sock, hex_data, strlen(hex_data), 0);
 
         write_log("Client", "DOWNLOAD", filename);
@@ -246,7 +195,13 @@ void handle_client(int client_sock) {
         write_log("Client", "EXIT", "Client requested to exit");
     }
 }
-
+```
+###### Daemonize 
+Menjadikan proses ini sebagai daemon (background service) dengan cara:
+- Fork dua kali agar tidak terkait terminal.
+- Menghapus umask agar file permission default normal.
+- Menutup file descriptor STDIN/STDOUT/STDERR.
+```
 void daemonize() {
     pid_t pid = fork();
     if (pid < 0) exit(EXIT_FAILURE);
@@ -263,7 +218,27 @@ void daemonize() {
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
 }
+```
+###### Log Aktivitas
+```
+void write_log(const char *source, const char *action, const char *info) {
+    FILE *log = fopen(LOG_FILE, "a");
+    if (!log) return;
 
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timestamp[32];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", t);
+    fprintf(log, "[%s][%s]: [%s] [%s]\n", source, timestamp, action, info);
+    fclose(log);
+}
+```
+###### Main Function
+1. Menjalankan daemonize.
+2. Membuat socket Unix di /tmp/image_rpc_socket.
+3. Listen dan menerima koneksi dari client secara loop.
+4. Memanggil handle_client() untuk tiap koneksi.
+```
 int main() {
     daemonize();
     unlink(SOCKET_PATH);
@@ -288,6 +263,15 @@ int main() {
 
     return 0;
 }
+```
+###### How to run
+1. Kompilasi
+```
+gcc image_server.c -o server/image_server
+```
+2. Jalankan (daemon)
+```
+./server/image_server
 ```
 #### image_client.c
 ```
