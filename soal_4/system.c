@@ -12,33 +12,33 @@
 #include <stdbool.h>
 #include "assets/shm_common.h"
 
+
 #define MAX_HUNTERS 100
 #define MAX_DUNGEONS 100
-#define GLOBAL_SHM_KEY 0x1111  // Kunci shared memory global
-#define GLOBAL_SEM_KEY 0x2222  // Kunci semaphore global
+#define GLOBAL_SHM_KEY 0x1111  // kunci shared memory global
+#define GLOBAL_SEM_KEY 0x2222  // kunci semaphore global
 
-// Struktur data untuk Hunter (disimpan di shared memory global)
 struct Hunter {
-    int id;                // ID unik hunter
+    int id;               
     char name[50];
     int level;
     int exp;
-    int atk, hp, def;      // Statistik saat ini
-    int init_atk, init_hp, init_def; // Statistik awal (untuk reset)
-    int banned;            // Status banned (1 = banned, 0 = tidak)
-    int active;            // Apakah slot aktif (1) atau kosong (0)
+    int atk, hp, def;      
+    int init_atk, init_hp, init_def; // stat awal
+    int banned;            
+    int active;            // aktif 1 or 0 
 };
 
-// Struktur data global (shared memory)
+// struktur global mem (shared memory)
 struct GlobalMemory {
-    int nextHunterId;             // ID berikutnya yang akan diberikan
-    int numHunters;               // Jumlah hunter aktif
+    int nextHunterId;             
+    int numHunters;               
     struct Hunter hunters[MAX_HUNTERS];
-    int numDungeons;              // Jumlah dungeon aktif
-    key_t dungeonKeys[MAX_DUNGEONS]; // Kunci unik setiap dungeon
+    int numDungeons;             
+    key_t dungeonKeys[MAX_DUNGEONS]; 
 };
 
-// Struktur data Dungeon (disimpan di shared memory terpisah)
+// struktur data Dungeon (shared memory terpisah)
 struct Dungeon {
     int level;
     int atk;
@@ -47,7 +47,7 @@ struct Dungeon {
     int exp;
 };
 
-// Definisi union semun untuk operasi semctl
+//  union semun untuk operasi semctl
 union semun {
     int val;
     struct semid_ds *buf;
@@ -57,20 +57,22 @@ union semun {
 int shmidGlobal;
 struct GlobalMemory *globalMem;
 int semid;
-bool running = true;  // Flag kontrol thread pembuatan dungeon
+bool running = true;  //kontrol thread pembuatan dungeon
+bool generateDungeonActive = false;  // Flag untuk mode generate dungeon
 
-// Operasi semaphore (lock/unlock)
+
+// operasi semaphore (lock/unlock)
 struct sembuf sem_lock = {0, -1, 0};
 struct sembuf sem_unlock = {0, 1, 0};
 
-// Fungsi cleanup untuk menghapus semua shared memory dan semaphore saat program berhenti
+// fungsi cleanup untuk menghapus semua shared memory dan semaphore saat program berhenti
 void cleanup(int signum) {
-    // Stop thread pembuatan dungeon
+    // stop thread pembuatan dungeon
     running = false;
 
-    // Lock untuk baca daftar dungeon
+    // lock untuk baca daftar dungeon
     semop(semid, &sem_lock, 1);
-    // Hapus semua shared memory dungeon yang tersisa
+    // hapus semua shared memory dungeon yang tersisa
     for(int i = 0; i < globalMem->numDungeons; i++) {
         key_t key = globalMem->dungeonKeys[i];
         int shmid = shmget(key, sizeof(struct Dungeon), 0666);
@@ -80,49 +82,43 @@ void cleanup(int signum) {
     }
     semop(semid, &sem_unlock, 1);
 
-    // Detach dan hapus global shared memory
+    // detach dan hapus global shared memory
     shmdt(globalMem);
     shmctl(shmidGlobal, IPC_RMID, NULL);
 
-    // Hapus semaphore
+    // hapus semaphore
     semctl(semid, 0, IPC_RMID);
 
     printf("\nProgram dihentikan, semua shared memory telah dihapus.\n");
     exit(0);
 }
 
-// Thread yang membuat dungeon baru setiap 3 detik
+// thread yang membuat dungeon baru setiap 3 detik
 void *dungeonThread(void *arg) {
     srand(time(NULL));
-    while(running) {
+    while (running) {
         sleep(3);
+        if (!generateDungeonActive) continue;  // Hanya generate dungeon saat flag aktif
+
         semop(semid, &sem_lock, 1);
         if(globalMem->numDungeons < MAX_DUNGEONS) {
             int idx = globalMem->numDungeons;
-            // Buat kunci unik untuk dungeon baru (contoh: offset tetap ditambah index)
             key_t key = GLOBAL_SHM_KEY + 100 + idx;
             int shmid = shmget(key, sizeof(struct Dungeon), IPC_CREAT | 0666);
-            if(shmid < 0) {
-                perror("Gagal membuat shared memory dungeon");
-            } else {
+            if(shmid >= 0) {
                 struct Dungeon *d = (struct Dungeon*) shmat(shmid, NULL, 0);
-                if(d == (void*) -1) {
-                    perror("Gagal attach shared memory dungeon");
-                } else {
-                    // Isi dungeon dengan nilai random sesuai spesifikasi
-                    d->level = rand() % 5 + 1;      // 1-5
-                    d->atk   = rand() % 51 + 100;   // 100-150
-                    d->hp    = rand() % 51 + 50;    // 50-100
-                    d->def   = rand() % 26 + 25;    // 25-50
-                    d->exp   = rand() % 151 + 150;  // 150-300
-                    // Tambahkan kunci ke daftar global
+                if(d != (void*) -1) {
+                    d->level = rand() % 5 + 1;
+                    d->atk   = rand() % 51 + 100;
+                    d->hp    = rand() % 51 + 50;
+                    d->def   = rand() % 26 + 25;
+                    d->exp   = rand() % 151 + 150;
                     globalMem->dungeonKeys[idx] = key;
                     globalMem->numDungeons++;
 
-                    printf("Notifikasi: Dungeon baru dibuat - Key: %d, Level: %d, ATK: %d, HP: %d, DEF: %d, EXP: %d\n",
+                    printf("Dungeon baru dibuat - Key: %d, Level: %d, ATK: %d, HP: %d, DEF: %d, EXP: %d\n",
                            (int)key, d->level, d->atk, d->hp, d->def, d->exp);
                     fflush(stdout);
-
                     shmdt(d);
                 }
             }
@@ -132,7 +128,41 @@ void *dungeonThread(void *arg) {
     return NULL;
 }
 
-// Tampilkan daftar hunter yang aktif
+void generateDungeonOnce() {
+    semop(semid, &sem_lock, 1);
+    if(globalMem->numDungeons < MAX_DUNGEONS) {
+        int idx = globalMem->numDungeons;
+        key_t key = GLOBAL_SHM_KEY + 100 + idx;
+        int shmid = shmget(key, sizeof(struct Dungeon), IPC_CREAT | 0666);
+        if(shmid < 0) {
+            perror("Gagal membuat shared memory dungeon");
+        } else {
+            struct Dungeon *d = (struct Dungeon*) shmat(shmid, NULL, 0);
+            if(d == (void*) -1) {
+                perror("Gagal attach shared memory dungeon");
+            } else {
+                d->level = rand() % 5 + 1;
+                d->atk   = rand() % 51 + 100;
+                d->hp    = rand() % 51 + 50;
+                d->def   = rand() % 26 + 25;
+                d->exp   = rand() % 151 + 150;
+
+                globalMem->dungeonKeys[idx] = key;
+                globalMem->numDungeons++;
+
+                printf("Dungeon baru dibuat - Key: %d, Level: %d, ATK: %d, HP: %d, DEF: %d, EXP: %d\n",
+                    (int)key, d->level, d->atk, d->hp, d->def, d->exp);
+                shmdt(d);
+            }
+        }
+    } else {
+        printf("Jumlah maksimum dungeon telah tercapai.\n");
+    }
+    semop(semid, &sem_unlock, 1);
+}
+
+
+// tampilkan daftar hunter yang aktif
 void showHunters() {
     semop(semid, &sem_lock, 1);
     printf("ID\tNama\tLevel\tExp\tATK\tHP\tDEF\tBanned\n");
@@ -148,7 +178,7 @@ void showHunters() {
     semop(semid, &sem_unlock, 1);
 }
 
-// Tampilkan daftar dungeon yang aktif beserta statistiknya
+// tampilkan daftar dungeon yang aktif beserta statistiknya
 void showDungeons() {
     semop(semid, &sem_lock, 1);
     printf("Key\tLevel\tATK\tHP\tDEF\tEXP\n");
@@ -159,7 +189,7 @@ void showDungeons() {
     }
     semop(semid, &sem_unlock, 1);
 
-    // Baca setiap dungeon dari shared memory terpisah
+    // baca setiap dungeon dari shared memory terpisah
     for(int i = 0; i < count; i++) {
         int shmid = shmget(keys[i], sizeof(struct Dungeon), 0666);
         if(shmid >= 0) {
@@ -174,30 +204,30 @@ void showDungeons() {
 }
 
 int main() {
-    // Tangani SIGINT (Ctrl+C) untuk cleanup sebelum exit
+    // tangani SIGINT (Ctrl+C) untuk cleanup sebelum exit
     signal(SIGINT, cleanup);
 
-    // Buat atau attach shared memory global
+    // buat atau attach shared memory global
     shmidGlobal = shmget(GLOBAL_SHM_KEY, sizeof(struct GlobalMemory), IPC_CREAT | 0666);
     if(shmidGlobal < 0) { perror("shmget global"); exit(1); }
     globalMem = (struct GlobalMemory*) shmat(shmidGlobal, NULL, 0);
     if(globalMem == (void*) -1) { perror("shmat global"); exit(1); }
 
-    // Buat atau attach semaphore global
+    // buat atau attach semaphore global
     semid = semget(GLOBAL_SEM_KEY, 1, IPC_CREAT | 0666);
     if(semid < 0) { perror("semget"); exit(1); }
-    // Inisialisasi semaphore bila baru dibuat
+    // inisialisasi semaphore bila baru dibuat
     union semun arg;
     struct semid_ds buf;
     arg.buf = &buf;
-    // Jika berhasil IPC_STAT, berarti semaphore ada (setiap kali program baru dimulai,
+    // jika berhasil IPC_STAT, berarti semaphore ada (setiap kali program baru dimulai,
     // nilai semaphore kita inisialisasi 1).
     if(semctl(semid, 0, IPC_STAT, arg) == 0) {
         arg.val = 1;
         semctl(semid, 0, SETVAL, arg);
     }
 
-    // Inisialisasi data global saat pertama kali dibuat
+    // inisialisasi data global saat pertama kali dibuat
     semop(semid, &sem_lock, 1);
     if(globalMem->nextHunterId == 0) {
         globalMem->nextHunterId = 1;
@@ -210,31 +240,35 @@ int main() {
     }
     semop(semid, &sem_unlock, 1);
 
-    // Mulai thread untuk pembuatan dungeon otomatis
+    // mulai thread untuk pembuatan dungeon otomatis
     pthread_t tid;
     pthread_create(&tid, NULL, dungeonThread, NULL);
 
-    // Menu utama sistem (loop sampai exit)
+    // menu utama sistem (loop sampai exit)
     while(1) {
         printf("\n--- Sistem Utama ---\n");
-        showHunters();
-        showDungeons();
-        printf("\nPilihan:\n");
-        printf("1. Ban Hunter\n");
-        printf("2. Unban Hunter\n");
-        printf("3. Reset Hunter\n");
-        printf("4. Keluar\n");
-        printf("Masukkan pilihan (1-4): ");
+        printf("1. Info Hunter\n");
+        printf("2. Info Dungeon\n");
+        printf("3. Generate Dungeon Sekali\n");
+        printf("4. Ban Hunter\n");
+        printf("5. Unban Hunter\n");
+        printf("6. Reset Hunter\n");
+        printf("7. Keluar\n");
+        printf("Masukkan pilihan (1-7): ");
         int choice;
         scanf("%d", &choice);
-        if(choice == 4) {
-            cleanup(0);
-        }
-
+    
         if(choice == 1) {
-            // Ban hunter berdasarkan ID
+            showHunters();
+        } else if(choice == 2) {
+            showDungeons();
+        } else if(choice == 3) {
+            generateDungeonActive = !generateDungeonActive;
+            printf("Generate Dungeon sekarang: %s\n", generateDungeonActive ? "AKTIF" : "NONAKTIF");
+        } else if(choice == 4) {
+            int id;
             printf("Masukkan ID hunter yang akan diban: ");
-            int id; scanf("%d", &id);
+            scanf("%d", &id);
             semop(semid, &sem_lock, 1);
             int found = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -246,12 +280,11 @@ int main() {
             }
             semop(semid, &sem_unlock, 1);
             if(found) printf("Hunter ID %d telah diban.\n", id);
-            else printf("Hunter dengan ID %d tidak ditemukan.\n", id);
-        }
-        else if(choice == 2) {
-            // Unban hunter berdasarkan ID
-            printf("Masukkan ID hunter yang akan diunban: ");
-            int id; scanf("%d", &id);
+            else printf("Hunter tidak ditemukan.\n");
+        } else if(choice == 5) {
+            int id;
+            printf("Masukkan ID hunter yang akan di-unban: ");
+            scanf("%d", &id);
             semop(semid, &sem_lock, 1);
             int found = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -262,13 +295,12 @@ int main() {
                 }
             }
             semop(semid, &sem_unlock, 1);
-            if(found) printf("Hunter ID %d telah diunban.\n", id);
-            else printf("Hunter dengan ID %d tidak ditemukan.\n", id);
-        }
-        else if(choice == 3) {
-            // Reset hunter (kembali ke statistik awal)
-            printf("Masukkan ID hunter yang akan direset: ");
-            int id; scanf("%d", &id);
+            if(found) printf("Hunter ID %d telah di-unban.\n", id);
+            else printf("Hunter tidak ditemukan.\n");
+        } else if(choice == 6) {
+            int id;
+            printf("Masukkan ID hunter yang akan di-reset: ");
+            scanf("%d", &id);
             semop(semid, &sem_lock, 1);
             int found = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -284,13 +316,14 @@ int main() {
                 }
             }
             semop(semid, &sem_unlock, 1);
-            if(found) printf("Stats hunter ID %d telah direset ke awal.\n", id);
-            else printf("Hunter dengan ID %d tidak ditemukan.\n", id);
-        }
-        else {
+            if(found) printf("Hunter ID %d telah direset ke stat awal.\n", id);
+            else printf("Hunter tidak ditemukan.\n");
+        } else if(choice == 7) {
+            cleanup(0);
+        } else {
             printf("Pilihan tidak valid.\n");
         }
     }
-
+    
     return 0;
 }
