@@ -6,14 +6,15 @@
 #include <sys/sem.h>
 #include <unistd.h>
 #include <time.h>
+#include "shm_common.h"
 
 
 #define MAX_HUNTERS 100
 #define MAX_DUNGEONS 100
-#define GLOBAL_SHM_KEY 0x1111  // Harus sama dengan di system.c
-#define GLOBAL_SEM_KEY 0x2222  // Harus sama dengan di system.c
+#define GLOBAL_SHM_KEY 0x1111  // harus sama dengan di system.c
+#define GLOBAL_SEM_KEY 0x2222  // harus sama dengan di system.c
 
-// Struktur data Hunter (sama seperti di system.c)
+// struktur data Hunter (sama seperti di system.c)
 struct Hunter {
     int id;
     char name[50];
@@ -25,7 +26,7 @@ struct Hunter {
     int active;
 };
 
-// Struktur data GlobalMemory (sama seperti di system.c)
+// struktur data GlobalMemory (sama seperti di system.c)
 struct GlobalMemory {
     int nextHunterId;
     int numHunters;
@@ -42,15 +43,29 @@ struct Dungeon {
     int exp;
 };
 
-// Operasi semaphore (lock/unlock)
+// operasi semaphore (lock/unlock)
 struct sembuf sem_lock = {0, -1, 0};
 struct sembuf sem_unlock = {0, 1, 0};
+
+void defeatDungeon(struct Hunter *hunter, struct Dungeon *dungeon) {
+    printf("\n>> %s mengalahkan dungeon level %d!\n", hunter->name, dungeon->level);
+    
+    // Menambahkan stat hunter berdasarkan stat dungeon
+    hunter->atk += dungeon->atk;
+    hunter->def += dungeon->def;
+    hunter->hp += dungeon->hp;
+    
+    printf("   ATK bertambah menjadi %d\n", hunter->atk);
+    printf("   DEF bertambah menjadi %d\n", hunter->def);
+    printf("   HP bertambah menjadi %d\n", hunter->hp);
+}
 
 void levelUp(struct Hunter *hunter) {
     hunter->level += 1;
     hunter->atk += 2;
     hunter->def += 2;
     hunter->hp += 10;
+    hunter->exp = 0;
 
     printf("\n>> %s naik ke level %d!\n", hunter->name, hunter->level);
     printf("   ATK bertambah menjadi %d\n", hunter->atk);
@@ -61,7 +76,7 @@ void levelUp(struct Hunter *hunter) {
 int main() {
     srand(time(NULL) ^ getpid());
 
-    // Attach ke shared memory global
+    // attach ke shared memory global
     int shmid = shmget(GLOBAL_SHM_KEY, sizeof(struct GlobalMemory), 0666);
     if(shmid < 0) {
         perror("Shared memory global tidak ditemukan, pastikan system sudah dijalankan");
@@ -73,7 +88,7 @@ int main() {
         exit(1);
     }
 
-    // Attach ke semaphore global
+    // attach ke semaphore global
     int semid = semget(GLOBAL_SEM_KEY, 1, 0666);
     if(semid < 0) {
         perror("Semaphore tidak ditemukan");
@@ -82,7 +97,7 @@ int main() {
 
     int userId = -1; // ID hunter yang login
 
-    // Menu registrasi / login
+    // menu registrasi / login
     while(userId < 0) {
         printf("\n--- Menu Hunter ---\n");
         printf("1. Register\n");
@@ -92,19 +107,19 @@ int main() {
         int choice;
         scanf("%d", &choice);
         if(choice == 3) {
-            // Keluar program
+            // keluar program
             shmdt(globalMem);
             printf("Keluar...\n");
             exit(0);
         }
         else if(choice == 1) {
-            // Registrasi
+            // registrasi
             char name[50];
             printf("Masukkan nama: ");
             scanf("%s", name);
 
             semop(semid, &sem_lock, 1);
-            // Periksa nama unik
+            // periksa nama unik
             int nameExists = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
                 if(globalMem->hunters[i].active && strcmp(globalMem->hunters[i].name, name) == 0) {
@@ -117,13 +132,13 @@ int main() {
                 semop(semid, &sem_unlock, 1);
                 continue;
             }
-            // Periksa kapasitas
+            // periksa kapasitas
             if(globalMem->numHunters >= MAX_HUNTERS) {
                 printf("Jumlah hunter maksimum tercapai.\n");
                 semop(semid, &sem_unlock, 1);
                 continue;
             }
-            // Cari slot kosong
+            // cari slot kosong
             int idx = -1;
             for(int i = 0; i < MAX_HUNTERS; i++) {
                 if(!globalMem->hunters[i].active) {
@@ -136,14 +151,14 @@ int main() {
                 semop(semid, &sem_unlock, 1);
                 continue;
             }
-            // Tambahkan hunter baru
+            // tambahkan hunter baru
             int id = globalMem->nextHunterId++;
             globalMem->hunters[idx].id = id;
             strncpy(globalMem->hunters[idx].name, name, 49);
             globalMem->hunters[idx].name[49] = '\0';
             globalMem->hunters[idx].level = 1;
             globalMem->hunters[idx].exp = 0;
-            // Statistik awal acak
+            // statistik awal acak
             globalMem->hunters[idx].atk = 10;  // 10-20
             globalMem->hunters[idx].hp  = 100; // 100-120
             globalMem->hunters[idx].def = 5;  // 10-20
@@ -158,7 +173,7 @@ int main() {
             printf("Registrasi berhasil. ID Anda: %d\n", id);
         }
         else if(choice == 2) {
-            // Login
+            // login
             printf("Masukkan ID: ");
             int id;
             scanf("%d", &id);
@@ -190,7 +205,7 @@ int main() {
         }
     }
 
-    // Menu utama hunter setelah login
+    // menu utama hunter setelah login
     while(1) {
         printf("\n=== Menu Hunter (ID %d) ===\n", userId);
         printf("1. Tampilkan Dungeon (sesuai level)\n");
@@ -208,7 +223,7 @@ int main() {
             exit(0);
         }
         else if(opt == 1) {
-            // Tampilkan dungeon sesuai level hunter
+            // tampilkan dungeon sesuai level hunter
             semop(semid, &sem_lock, 1);
             int myLevel = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -241,7 +256,7 @@ int main() {
             }
         }
             else if(opt == 2) {
-                // Conquer dungeon (by key)
+                // conquer dungeon (by key)
                 printf("Masukkan Key dungeon yang ingin ditaklukkan: ");
                 int key;
                 scanf("%d", &key);
@@ -258,7 +273,7 @@ int main() {
                     continue;
                 }
             
-                // Ambil hunter
+                // ambil hunter
                 semop(semid, &sem_lock, 1);
                 struct Hunter *hunter = NULL;
                 for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -274,7 +289,7 @@ int main() {
                     continue;
                 }
             
-                // Cek apakah level hunter cukup
+                // cek apakah level hunter cukup
                 if(hunter->level < d->level) {
                     semop(semid, &sem_unlock, 1);
                     printf("Level Anda terlalu rendah untuk dungeon ini!\n");
@@ -282,40 +297,47 @@ int main() {
                     continue;
                 }
             
-                // Simulasi pertarungan
-                int hunterHp = hunter->hp;
-                int dungeonHp = d->hp;
+                // simulasi pertarungan
+                // int hunterHp = hunter->hp;
+                // int dungeonHp = d->hp;
             
-                while(hunterHp > 0 && dungeonHp > 0) {
-                    int damageToDungeon = hunter->atk - d->def;
-                    if(damageToDungeon < 0) damageToDungeon = 0;
-                    dungeonHp -= damageToDungeon;
+                // while(hunterHp > 0 && dungeonHp > 0) {
+                //     int damageToDungeon = hunter->atk - d->def;
+                //     if(damageToDungeon < 0) damageToDungeon = 0;
+                //     dungeonHp -= damageToDungeon;
             
-                    if(dungeonHp <= 0) break;
+                //     if(dungeonHp <= 0) break;
             
-                    int damageToHunter = d->atk - hunter->def;
-                    if(damageToHunter < 0) damageToHunter = 0;
-                    hunterHp -= damageToHunter;
-                }
+                //     int damageToHunter = d->atk - hunter->def;
+                //     if(damageToHunter < 0) damageToHunter = 0;
+                //     hunterHp -= damageToHunter;
+                // }
             
-                if(hunterHp <= 0) {
-                    printf("Anda kalah dalam pertarungan melawan dungeon level %d...\n", d->level);
-                    semop(semid, &sem_unlock, 1);
-                    shmdt(d);
-                    continue;
-                }
+                // if(hunterHp <= 0) {
+                //     printf("Anda kalah dalam pertarungan melawan dungeon level %d...\n", d->level);
+                //     semop(semid, &sem_unlock, 1);
+                //     shmdt(d);
+                //     continue;
+                // }
             
-                // Menang: Dapat exp dan dungeon dihapus
+                // menang: Dapat exp dan dungeon dihapus
                 printf("Anda berhasil menaklukkan dungeon level %d!\n", d->level);
                 hunter->exp += d->exp;
             
-                // Cek level up: misalnya 100 exp per level
-                while(hunter->exp >= hunter->level * 100) {
-                    hunter->exp -= hunter->level * 100;
+                // cek level up 500 exp per level
+                while(hunter->exp >= 500) {
+                    hunter->exp -= 500;
                     levelUp(hunter);
                 }
-            
-                // Hapus dungeon dari global memory
+
+                // tambahkan stat dungeon ke hunter
+                hunter->atk += d->atk;
+                hunter->def += d->def;
+                hunter->hp += d->hp;
+                printf("Stat dungeon diserap! ATK +%d, DEF +%d, HP +%d\n", d->atk, d->def, d->hp);
+
+
+                // hapus dungeon dari global memory
                 for(int i = 0; i < globalMem->numDungeons; i++) {
                     if((int)globalMem->dungeonKeys[i] == key) {
                         for(int j = i; j < globalMem->numDungeons - 1; j++) {
@@ -328,7 +350,7 @@ int main() {
             
                 semop(semid, &sem_unlock, 1);
             
-                // Hapus shared memory dungeon
+                // hapus shared memory dungeon
                 shmdt(d);
                 shmctl(shmid_d, IPC_RMID, NULL);
             }
@@ -339,7 +361,7 @@ int main() {
 
             semop(semid, &sem_lock, 1);
             
-            // Cari index hunter user
+            // cari index hunter user
             for(int i = 0; i < MAX_HUNTERS; i++) {
                 if(globalMem->hunters[i].active && globalMem->hunters[i].id == userId) {
                     myIdx = i;
@@ -352,7 +374,7 @@ int main() {
                 continue;
             }
             
-            // Tampilkan daftar hunter aktif
+            // tampilkan daftar hunter aktif
             printf("\n--- Daftar Hunter Aktif ---\n");
             int found = 0;
             for(int i = 0; i < MAX_HUNTERS; i++) {
@@ -371,14 +393,14 @@ int main() {
             int enemyId;
             scanf("%d", &enemyId);
             
-            // Cek jika user memilih dirinya sendiri
+            // cek jika user memilih dirinya sendiri
             if(enemyId == userId) {
                 printf("Kamu tidak bisa menantang dirimu sendiri!\n");
                 semop(semid, &sem_unlock, 1);
                 continue;
             }
             
-            // Cari index musuh
+            // cari index musuh
             int enemyIdx = -1;
             for(int i = 0; i < MAX_HUNTERS; i++) {
                 if(globalMem->hunters[i].active && globalMem->hunters[i].id == enemyId && !globalMem->hunters[i].banned) {
@@ -392,7 +414,7 @@ int main() {
                 continue;
             }
             
-            // Tampilkan stat
+            // tampilkan stat
             struct Hunter myHunter = globalMem->hunters[myIdx];
             struct Hunter enemy = globalMem->hunters[enemyIdx];
             
@@ -403,7 +425,7 @@ int main() {
             printf(">> Musuh: %s (Level %d)\n", enemy.name, enemy.level);
             printf("   ATK: %d | HP: %d | DEF: %d\n", enemy.atk, enemy.hp, enemy.def);
             
-           // Hitung kekuatan masing-masing hunter
+           // hitung kekuatan masing-masing hunter
 int myPower = myHunter.atk + myHunter.hp + myHunter.def;
 int enemyPower = enemy.atk + enemy.hp + enemy.def;
 
@@ -412,29 +434,29 @@ printf(">> Kamu (%s) : Power = %d\n", myHunter.name, myPower);
 printf(">> Musuh (%s): Power = %d\n", enemy.name, enemyPower);
 
 if (myPower >= enemyPower) {
-    // Kamu menang
+    //  menang
     printf(">> Kamu menang!\n");
     globalMem->hunters[myIdx].atk += enemy.atk;
     globalMem->hunters[myIdx].hp  += enemy.hp;
     globalMem->hunters[myIdx].def += enemy.def;
 
-    // Musuh dihapus
+    // musuh dihapus
     globalMem->hunters[enemyIdx].active = 0;
     printf(">> Hunter %s telah tereliminasi dari sistem.\n", enemy.name);
 } else {
-    // Kamu kalah
+    // kamu kalah
     printf(">> Kamu kalah!\n");
     globalMem->hunters[enemyIdx].atk += myHunter.atk;
     globalMem->hunters[enemyIdx].hp  += myHunter.hp;
     globalMem->hunters[enemyIdx].def += myHunter.def;
 
-    // Kamu dihapus
+    // kamu dihapus
     globalMem->hunters[myIdx].active = 0;
     printf(">> Kamu telah tereliminasi dari sistem.\n");
 }
 
             
-            // Cek level up
+            // cek level up
             if(globalMem->hunters[myIdx].exp >= 500) {
                 globalMem->hunters[myIdx].exp -= 500;
                 globalMem->hunters[myIdx].level++;
@@ -450,7 +472,7 @@ if (myPower >= enemyPower) {
         }
         
         else if(opt == 4) {
-            // Tampilkan statistik diri sendiri
+            // tampilkan statistik diri sendiri
             semop(semid, &sem_lock, 1);
             for(int i = 0; i < MAX_HUNTERS; i++) {
                 if(globalMem->hunters[i].active && globalMem->hunters[i].id == userId) {
@@ -463,7 +485,7 @@ if (myPower >= enemyPower) {
             semop(semid, &sem_unlock, 1);
         }
         else if(opt == 6) {
-            // Reset stat tertentu
+            // reset stat tertentu
             printf("Stat yang ingin di-reset:\n");
             printf("1. ATK\n");
             printf("2. HP\n");
